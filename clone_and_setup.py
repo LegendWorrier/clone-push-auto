@@ -33,6 +33,10 @@ def parse_args() -> argparse.Namespace:
         "--dest",
         help="Optional destination directory; defaults to the repo name from the URL",
     )
+    parser.add_argument(
+        "--push-to",
+        help="Optional GitHub URL to push the cloned repo to (preserves commit timestamps)",
+    )
     return parser.parse_args()
 
 
@@ -75,7 +79,12 @@ def run(cmd: list[str], cwd: Path | None = None) -> None:
 def clone_repo(repo_url: str, dest: Path) -> None:
     if dest.exists():
         raise FileExistsError(f"Destination already exists: {dest}")
-    run(["git", "clone", repo_url, str(dest)])
+    # Clone with --mirror to get all branches and refs
+    run(["git", "clone", "--mirror", repo_url, str(dest / ".git")])
+    # Convert bare repo to normal repo
+    run(["git", "config", "--bool", "core.bare", "false"], cwd=dest)
+    # Checkout to create working directory
+    run(["git", "checkout"], cwd=dest)
 
 
 def set_git_config(repo_dir: Path, user_name: str, user_email: str) -> None:
@@ -85,6 +94,16 @@ def set_git_config(repo_dir: Path, user_name: str, user_email: str) -> None:
 
 def run_pdm_install(repo_dir: Path) -> None:
     run(["pdm", "install"], cwd=repo_dir)
+
+
+def push_to_github(repo_dir: Path, target_url: str) -> None:
+    """Push cloned repo to a new GitHub remote, preserving all commit timestamps."""
+    # Add new remote
+    run(["git", "remote", "add", "target", target_url], cwd=repo_dir)
+
+    # Push all branches and tags, excluding pull request refs
+    run(["git", "push", "target", "refs/heads/*:refs/heads/*"], cwd=repo_dir)
+    run(["git", "push", "target", "refs/tags/*:refs/tags/*"], cwd=repo_dir)
 
 
 def main() -> int:
@@ -105,6 +124,10 @@ def main() -> int:
 
         print("Running `pdm install` ...")
         run_pdm_install(repo_dir)
+
+        if args.push_to:
+            print(f"Pushing to {args.push_to} (preserving commit history) ...")
+            push_to_github(repo_dir, args.push_to)
 
         print("Done.")
         return 0
